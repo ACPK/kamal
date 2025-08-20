@@ -21,11 +21,30 @@ class CliBuildTest < CliTestCase
         .returns("")
 
       run_command("push", "--verbose").tap do |output|
+        assert_hook_ran "pre-connect", output
         assert_hook_ran "pre-build", output
         assert_match /Cloning repo into build directory/, output
         assert_match /git -C #{Dir.tmpdir}\/kamal-clones\/app-#{pwd_sha} clone #{Dir.pwd}/, output
         assert_match /docker --version && docker buildx version/, output
         assert_match /docker buildx build --output=type=registry --platform linux\/amd64 --builder kamal-local-docker-container -t dhh\/app:999 -t dhh\/app:latest --label service="app" --file Dockerfile \. 2>&1 as .*@localhost/, output
+      end
+    end
+  end
+
+  test "push with remote builder checks both the builder and the remote context" do
+    with_build_directory do |build_directory|
+      Kamal::Commands::Hook.any_instance.stubs(:hook_exists?).returns(true)
+
+      SSHKit::Backend::Abstract.any_instance.expects(:capture_with_info)
+        .with(:git, "-C", anything, :"rev-parse", :HEAD)
+        .returns(Kamal::Git.revision)
+
+      SSHKit::Backend::Abstract.any_instance.expects(:capture_with_info)
+        .with(:git, "-C", anything, :status, "--porcelain")
+        .returns("")
+
+      run_command("push", "--verbose", fixture: :with_remote_builder).tap do |output|
+        assert_match "docker buildx inspect kamal-remote-ssh---app-1-1-1-5 | grep -q Endpoint:.*kamal-remote-ssh---app-1-1-1-5-context && docker context inspect kamal-remote-ssh---app-1-1-1-5-context --format '{{.Endpoints.docker.Host}}' | grep -xq ssh://app@1.1.1.5 || (echo no compatible builder && exit 1)", output
       end
     end
   end
